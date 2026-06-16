@@ -587,12 +587,12 @@ if app_mode == "👤 利用者ログイン":
             st.session_state.current_user_id = None
             st.rerun()
             
-        tab_input, tab_report = st.tabs(["📝 本日の記録", "📊 週刊分析レポート"])
+        tab_input, tab_report, tab_history = st.tabs(["📝 本日の記録", "📊 週刊分析レポート", "📅 日ごとの履歴"])
         
         # --- タブ1：本日の記録 ---
         with tab_input:
             st.markdown("#### 今日の記録を追加・更新")
-            st.caption("基礎代謝と消費カロリーは、空欄（または0）のままで登録すると、あなたのプロフィールと今日の体重から自動で計算・保存されます。")
+            st.caption("Apple Watchなどの活動消費カロリーを直接入力できます。未入力の場合は、今日の活動レベルから自動計算されます。")
             
             df_user_data = get_user_data(user_profile["user_id"])
             last_weight_val = user_profile["target_weight"] + 5.0
@@ -607,13 +607,13 @@ if app_mode == "👤 利用者ログイン":
                     calories_val = st.number_input("摂取カロリー (kcal) *", min_value=0, max_value=15000, value=1800, step=50)
                 
                 with col2:
+                    active_cal_input = st.number_input("活動消費カロリー (kcal) - Apple Watch等の値", min_value=0, max_value=5000, value=0, step=10, help="Apple Watchのアクティブエネルギー(ムーブ)などを直接入力します。入力すると活動レベルの計算より優先されます。")
                     act_level = st.radio(
-                        "今日の活動レベル *",
+                        "今日の活動レベル (活動消費カロリーが未入力の場合に適用されます) *",
                         ["低（デスクワーク中心） : 係数 1.2", "中（よく歩いた・軽い運動） : 係数 1.4", "高（筋トレ・激しい運動） : 係数 1.65"],
                         index=1
                     )
                     bmr_input = st.text_input("基礎代謝 (kcal) - 未入力で自動計算", placeholder="例: 1500")
-                    tdee_input = st.text_input("消費カロリー (kcal) - 未入力で自動計算", placeholder="例: 2100")
                     
                 submit_record = st.form_submit_button("記録を保存")
                 
@@ -622,11 +622,6 @@ if app_mode == "👤 利用者ログイン":
                         bmr_val = float(bmr_input) if bmr_input.strip() != "" else 0.0
                     except ValueError:
                         bmr_val = 0.0
-                        
-                    try:
-                        tdee_val = float(tdee_input) if tdee_input.strip() != "" else 0.0
-                    except ValueError:
-                        tdee_val = 0.0
                         
                     if "低" in act_level:
                         coef = 1.2
@@ -646,7 +641,12 @@ if app_mode == "👤 利用者ログイン":
                             user_profile["gender"]
                         )
                         
-                    if tdee_val <= 0.0:
+                    # TDEEの算出ロジック
+                    if active_cal_input > 0:
+                        tdee_val = bmr_val + active_cal_input
+                        # 直接入力された場合は活動レベルの文字列を更新
+                        act_str = f"{act_str} (直入力: {active_cal_input}kcal)"
+                    else:
                         tdee_val = bmr_val * coef
                         
                     new_log = {
@@ -685,6 +685,113 @@ if app_mode == "👤 利用者ログイン":
                         else:
                             st.success(f"💾 本日の記録が完了しました！確実にデータが蓄積されています。次のAI週刊分析レポートの更新まで、あと {rem_days} 日分のログが必要です。")
                         st.rerun()
+
+        # --- タブ3：日ごとの履歴・編集 ---
+        with tab_history:
+            st.markdown("#### 📅 日ごとの記録・履歴管理")
+            
+            df_user_data = get_user_data(user_profile["user_id"])
+            
+            if df_user_data.empty:
+                st.info("登録されている履歴データがまだありません。「本日の記録」から入力を始めてください。")
+            else:
+                # タイムライン順（降順）ソート
+                df_history = df_user_data.sort_values('date', ascending=False).reset_index(drop=True)
+                
+                # 詳細表示・編集セクション
+                st.markdown("##### 📝 記録の確認・修正・削除")
+                st.caption("修正または削除したい日付を選択し、値を変更して保存、または削除ボタンを押してください。")
+                
+                # 日付選択用リスト
+                date_list = df_history['date'].tolist()
+                selected_date = st.selectbox("確認・修正する日付を選択", date_list)
+                
+                if selected_date:
+                    # 選択された日付のレコード抽出
+                    record = df_history[df_history['date'] == selected_date].iloc[0].to_dict()
+                    
+                    # 活動カロリーの逆算（TDEE - BMR）
+                    bmr_val = float(record.get('bmr', 0))
+                    tdee_val = float(record.get('tdee', 0))
+                    active_cal_calc = max(0.0, tdee_val - bmr_val)
+                    
+                    with st.form("edit_record_form"):
+                        col_e1, col_e2 = st.columns(2)
+                        with col_e1:
+                            edit_weight = st.number_input("体重 (kg)", min_value=10.0, max_value=300.0, value=float(record.get('weight', 0.0)), step=0.1)
+                            edit_intake = st.number_input("摂取カロリー (kcal)", min_value=0, max_value=15000, value=int(record.get('intake_kcal', 0)), step=50)
+                        
+                        with col_e2:
+                            edit_active = st.number_input("活動消費カロリー (kcal)", min_value=0, max_value=5000, value=int(active_cal_calc), step=10, help="Apple Watchなどのムーブエネルギーの値")
+                            edit_bmr = st.number_input("基礎代謝 (kcal)", min_value=0.0, max_value=5000.0, value=bmr_val, step=10.0)
+                            
+                        # ボタン配置用のレイアウト
+                        col_btn1, col_btn2 = st.columns([1, 1])
+                        with col_btn1:
+                            submit_edit = st.form_submit_button("🎨 変更内容を保存")
+                        with col_btn2:
+                            submit_delete = st.form_submit_button("🗑️ この日の記録を削除")
+                            
+                        if submit_edit:
+                            # TDEEの再計算
+                            new_tdee = edit_bmr + edit_active
+                            
+                            # データの更新
+                            idx_to_update = df_user_data[df_user_data['date'] == selected_date].index[0]
+                            df_user_data.at[idx_to_update, 'weight'] = round(edit_weight, 2)
+                            df_user_data.at[idx_to_update, 'intake_kcal'] = round(edit_intake, 0)
+                            df_user_data.at[idx_to_update, 'bmr'] = round(edit_bmr, 0)
+                            df_user_data.at[idx_to_update, 'tdee'] = round(new_tdee, 0)
+                            
+                            # 日付のソートと保存
+                            df_user_data['date'] = pd.to_datetime(df_user_data['date']).dt.date
+                            df_user_data = df_user_data.sort_values('date').reset_index(drop=True)
+                            
+                            if save_user_data(user_profile["user_id"], df_user_data):
+                                st.success(f"💾 {selected_date} の記録を修正しました。")
+                                st.rerun()
+                                
+                        if submit_delete:
+                            # データの削除
+                            df_deleted = df_user_data[df_user_data['date'] != selected_date]
+                            df_deleted['date'] = pd.to_datetime(df_deleted['date']).dt.date
+                            df_deleted = df_deleted.sort_values('date').reset_index(drop=True)
+                            
+                            if save_user_data(user_profile["user_id"], df_deleted):
+                                st.success(f"🗑️ {selected_date} の記録を削除しました。")
+                                st.rerun()
+                
+                st.markdown("---")
+                st.markdown("##### 📜 過去の全履歴一覧")
+                
+                # タイムライン風のアコーディオン表示
+                for idx, row in df_history.iterrows():
+                    date_str = row['date'].strftime("%Y年 %m月 %d日")
+                    weight_val = row['weight']
+                    intake_val = row['intake_kcal']
+                    bmr_val = row['bmr']
+                    tdee_val = row['tdee']
+                    active_val = max(0, tdee_val - bmr_val)
+                    net_val = intake_val - tdee_val
+                    
+                    # 収支によって色分けやマークを変える
+                    net_color = "#ff002b" if net_val > 0 else "#22c55e"
+                    net_sign = "+" if net_val > 0 else ""
+                    
+                    title = f"📅 {date_str}  |  体重: {weight_val:.2f} kg  |  収支: {net_sign}{int(net_val)} kcal"
+                    
+                    with st.expander(title):
+                        col_h1, col_h2, col_h3 = st.columns(3)
+                        with col_h1:
+                            st.metric(label="体重", value=f"{weight_val:.2f} kg")
+                        with col_h2:
+                            st.metric(label="摂取カロリー", value=f"{int(intake_val)} kcal")
+                        with col_h3:
+                            st.metric(
+                                label="消費カロリー (TDEE)", 
+                                value=f"{int(tdee_val)} kcal",
+                                delta=f"内、活動: {int(active_val)} kcal"
+                            )
 
         # --- タブ2：週刊分析レポート ---
         with tab_report:

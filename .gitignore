@@ -1,0 +1,12 @@
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Streamlit config/secrets
+.streamlit/
+
+# Local databases & test CSV data
+users.csv
+data.csv
+data_*.csv
+profile.json
